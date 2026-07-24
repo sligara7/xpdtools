@@ -1,6 +1,7 @@
 """Flyer classes for XPD beamline at NSLS-II."""
 
 import asyncio
+import math
 
 from ophyd_async.core import (
     ConfinedModel,
@@ -89,6 +90,41 @@ class SingleAxisFlyscanController(FlyerController[SingleAxisFlyscanInfo]):
         await wait_for_value(self.panda.pcomp[1].active, False, timeout=1)
 
 
+def _suggest_num_images(
+    travel_counts: int, requested_num_images: int, count: int = 3
+) -> list[int]:
+    """Suggest valid ``num_images`` near the requested value.
+
+    A valid ``num_images`` is one where ``num_images - 1`` divides
+    ``travel_counts`` exactly (so the PandA pulses land on integer counts) and
+    leaves at least two counts per step (one livetime, one deadtime).
+
+    Parameters
+    ----------
+    travel_counts : int
+        The sweep distance in encoder counts.
+    requested_num_images : int
+        The ``num_images`` the caller asked for.
+    count : int, optional
+        The maximum number of suggestions to return, by default 3.
+
+    Returns
+    -------
+    list[int]
+        Valid ``num_images`` values closest to the requested one.
+    """
+    requested_steps = max(1, requested_num_images - 1)
+    divisors: set[int] = set()
+    for i in range(1, math.isqrt(travel_counts) + 1):
+        if travel_counts % i == 0:
+            divisors.add(i)
+            divisors.add(travel_counts // i)
+    # Keep only divisors that leave at least two counts between pulses
+    valid_steps = (d for d in divisors if travel_counts // d >= 2)
+    ordered = sorted(valid_steps, key=lambda d: (abs(d - requested_steps), d))
+    return sorted(steps + 1 for steps in ordered[:count])
+
+
 def calculate_move_time_for_flyscan(
     travel_distance: float,
     max_motor_velocity: float,
@@ -162,9 +198,14 @@ def construct_fly_info_models(
         if travel_counts % (num_pulses - 1) != 0:
             # Subtract one from pulses because the num of steps is one less than
             # the number of pulses
+            suggestions = _suggest_num_images(travel_counts, num_pulses)
             raise ValueError(
                 f"Travel distance in counts ({travel_counts}) is not evenly divisible "
-                f"by the number of pulses ({num_pulses - 1})."
+                f"by the number of steps ({num_pulses - 1}). With encoder_resolution="
+                f"{encoder_resolution} deg/count over "
+                f"{abs(stop_position - start_position)} deg, choose num_images so that "
+                f"(num_images - 1) divides {travel_counts}. Nearest valid num_images: "
+                f"{suggestions}."
             )
         elif travel_counts < (num_pulses - 1) * 2:
             raise ValueError(

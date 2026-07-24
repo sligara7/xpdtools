@@ -109,6 +109,14 @@ def single_axis_flyscan(
     # motor move to start position time.
     yield from bps.wait(group="prepare")
 
+    # Hardware-triggered flyscans must not gate acquisition on plugin
+    # completion. Step-scan data logics (e.g. PluginSignalDataLogic) enable the
+    # driver's WaitForPlugins during prepare; during a fly this stalls capture
+    # because the driver waits for a plugin that never completes, so no frames
+    # are written (HDF NumCaptured stays 0 and the detector times out).
+    for det in detectors:
+        yield from bps.mv(det.driver.wait_for_plugins, False)
+
     yield from bps.declare_stream(*all_detectors, name=stream_name)
 
     yield from bps.kickoff_all(*all_devices, wait=True)
