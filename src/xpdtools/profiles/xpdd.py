@@ -14,14 +14,13 @@ from nslsii.ophyd_async.providers import NSLS2PathProvider
 from ophyd_async.core import (
     init_devices,
 )
-from ophyd_async.epics.adcore import ADWriterFactory, NDStatsIO, PluginSignalDataLogic
 from ophyd_async.epics.motor import Motor as AsyncEpicsMotor
 from ophyd_async.fastcs.panda import HDFPanda
 from ophyd_async.plan_stubs import retrieve_settings, store_settings
 from tiled.client import from_uri
 
 from xpdtools.detectors.panda import PackagedSettingsProvider
-from xpdtools.detectors.pilatus4 import Pilatus4Detector
+from xpdtools.detectors.pilatus4 import make_pilatus4
 from xpdtools.motors import RotationMotor
 from xpdtools.plans import single_axis_flyscan
 from xpdtools.utils import ProposalIDPrompt, initialize_run_engine
@@ -86,14 +85,19 @@ with init_devices(mock=XPDTOOLS_RUNNING_IN_CI):
     panda1 = HDFPanda("XF:28ID2-ES{PANDA:1}:", path_provider)
     rot_motor = RotationMotor("XF:28IDD-ES:2{Twister}Mtr", encoder_pos_at_zero=211)
     step_motor = AsyncEpicsMotor("XF:28IDD-ES:2{Twister}Mtr", name="amazon_motor")
-    pilatus1_stats1 = NDStatsIO("XF:28ID2-ES{Pilatus4-Det:1}Stats1:")
-    pilatus1 = Pilatus4Detector(
-        "XF:28ID2-ES{Pilatus4-Det:1}",
-        ADWriterFactory.hdf(path_provider),
-        plugins={"stats1": pilatus1_stats1},
+    # Step-scan Pilatus (with per-point Stats1 total) and fly-scan Pilatus
+    # (no stats — impractical at ~450 Hz). Same physical detector.
+    pilatus1 = make_pilatus4(
+        "XF:28ID2-ES{Pilatus4-Det:1}", path_provider, with_stats=True
     )
-    pilatus1.add_detector_logics(
-        PluginSignalDataLogic(pilatus1.driver, pilatus1.stats1.total)
+    pilatus1_fly = make_pilatus4(
+        "XF:28ID2-ES{Pilatus4-Det:1}", path_provider, with_stats=False
     )
+
+# Reuse the DE-provisioned `pilatus1` asset directory + data key for the fly
+# detector: the device name keys both the HDF write path and the data key, so a
+# new name would need a per-proposal DE-provisioned dir. Never use `pilatus1`
+# and `pilatus1_fly` in the same plan (they share the name).
+pilatus1_fly.set_name("pilatus1")
 
 panda_settings = PackagedSettingsProvider()

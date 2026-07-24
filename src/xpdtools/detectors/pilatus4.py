@@ -8,6 +8,7 @@ from typing import Annotated as A
 from ophyd_async.core import (
     DetectorTriggerLogic,
     DeviceMock,
+    PathProvider,
     SignalDict,
     SignalR,
     SignalRW,
@@ -31,6 +32,8 @@ from ophyd_async.epics.adcore import (
     AreaDetector,
     NDFileHDF5IO,
     NDPluginBaseIO,
+    NDStatsIO,
+    PluginSignalDataLogic,
     prepare_exposures,
     trigger_info_from_num_images,
 )
@@ -452,3 +455,57 @@ class Pilatus4Detector(AreaDetector[Pilatus4DriverIO]):
             config_sigs=config_sigs,
             name=name,
         )
+
+
+def make_pilatus4(
+    prefix: str,
+    path_provider: PathProvider,
+    *,
+    with_stats: bool = True,
+) -> Pilatus4Detector:
+    """Build a Pilatus4 detector configured for step or fly scans.
+
+    Which scan mode a detector is for is a construction-time concern, so it is
+    decided here rather than branched inside a scan plan (which would couple the
+    generic plan to this detector's stats config). Build one detector *with*
+    stats for step scans and one *without* for flyscans.
+
+    The per-point ``Stats1`` total is a **step-scan** feature implemented by
+    :class:`PluginSignalDataLogic`, which only supports single (step)
+    acquisition. On a hardware-triggered flyscan it is harmful: it enables the
+    driver's ``WaitForPlugins`` (which stalls capture) and advertises a hinted
+    ``stats1-total`` field that the fly never produces (breaking
+    ``BestEffortCallback``). So flyscan detectors omit it.
+
+    Parameters
+    ----------
+    prefix : str
+        EPICS PV prefix for the detector.
+    path_provider : PathProvider
+        Path provider for the HDF writer.
+    with_stats : bool, optional
+        If ``True`` (default) add a ``Stats1`` plugin and the per-point
+        ``PluginSignalDataLogic`` (for step scans). Set ``False`` for a flyscan
+        detector.
+
+    Returns
+    -------
+    Pilatus4Detector
+        A configured detector. When a flyscan detector shares a physical
+        detector with a step-scan one, call ``.set_name("<step name>")`` on it so
+        it reuses the step detector's provisioned asset directory and data key
+        (the device name keys both the HDF write path and the data key).
+    """
+    plugins: dict[str, NDPluginBaseIO] = {}
+    if with_stats:
+        plugins["stats1"] = NDStatsIO(f"{prefix}Stats1:")
+    detector = Pilatus4Detector(
+        prefix,
+        ADWriterFactory.hdf(path_provider),
+        plugins=plugins,
+    )
+    if with_stats:
+        detector.add_detector_logics(
+            PluginSignalDataLogic(detector.driver, detector.stats1.total)
+        )
+    return detector
