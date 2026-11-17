@@ -5,8 +5,8 @@ from collections.abc import Iterator
 import pytest
 from bluesky.run_engine import RunEngine
 from ophyd_async.core import init_devices, set_mock_value
-from nslsii.machines import NSLS2OpsMode, NSLS2StorageRing
 
+from xpd_tools.machine import NSLS2OpsMode, NSLS2StorageRing
 from xpd_tools.suspenders import SuspendFloorUnlessOpsMode
 
 SKIP = (NSLS2OpsMode.MAINTENANCE, NSLS2OpsMode.SHUTDOWN)
